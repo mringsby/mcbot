@@ -29,6 +29,97 @@ async def add_server_command(interaction: discord.Interaction, server_key: str, 
 
 # --- Public Commands ---
 
+@tree.command(name="help", description="Display available commands and their descriptions")
+async def help_command(interaction: discord.Interaction):
+    print("help command called")
+    
+    # Build embed for better formatting
+    embed = discord.Embed(
+        title="Minecraft Bot Commands",
+        description="Here are the commands you can use:",
+        color=discord.Color.blue()
+    )
+    
+    # Public commands
+    embed.add_field(
+        name="Public Commands",
+        value=(
+            "`/help` - Show this help message\n"
+            "`/list_servers` - List available Minecraft servers\n"
+            "`/players` - Show who's currently online\n"
+            "`/say <message>` - Broadcast a message to the server\n"
+            "`/weather <type>` - Set weather (clear, rain, or thunder)\n"
+            "`/whitelist add <username>` - Add player to whitelist\n"
+            "`/whitelist remove <username>` - Remove player from whitelist"
+        ),
+        inline=False
+    )
+    
+    # Status commands
+    embed.add_field(
+        name="Status Commands",
+        value=(
+            "`/status` - Get basic server status information\n"
+            "`/tps` - Check server's Ticks Per Second\n"
+            "`/memory` - Check server memory usage\n"
+            "`/world` - Get information about the Minecraft world"
+        ),
+        inline=False
+    )
+    
+    # Admin commands - only show if user is admin
+    if is_admin(interaction.user):
+        embed.add_field(
+            name="Admin Commands",
+            value=(
+                "`/add_server <key> <host> <port> <password>` - Add a new server\n"
+                "`/custom <server> <command>` - Run custom RCON command"
+            ),
+            inline=False
+        )
+    
+    # Tips
+    embed.add_field(
+        name="Tips",
+        value="For commands that need a server parameter, you can omit it if only one server is available",
+        inline=False
+    )
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@tree.command(name="players", description="Show who's currently online on the server")
+@app_commands.describe(server="Server key from servers.json (optional if only one server)")
+async def players(interaction: discord.Interaction, server: str = None):
+    print(f"players called with: {server}")
+    guild_id = interaction.guild_id
+    guild_servers = get_guild_servers(guild_id)
+
+    if not guild_servers:
+        await interaction.response.send_message("No servers are configured for this Discord server.", ephemeral=True)
+        return
+
+    if server is None:
+        server = get_single_guild_server(guild_id)
+        if server is None:
+            await interaction.response.send_message("Multiple servers are available. Please specify the server.", ephemeral=True)
+            return
+
+    if server not in guild_servers:
+        await interaction.response.send_message(f"❌ Server '{server}' is not available in this Discord server.", ephemeral=True)
+        return
+
+    # Get online players using "list" command
+    result = rcon_command(server, "list")
+    
+    # Create a nice embed
+    embed = discord.Embed(
+        title=f"Players on {server}",
+        description=result,
+        color=discord.Color.green()
+    )
+    
+    await interaction.response.send_message(embed=embed)
+
 @tree.command(name="list_servers", description="List available Minecraft servers")
 async def list_servers(interaction: discord.Interaction):
     print("list_servers called")
@@ -185,3 +276,164 @@ async def custom(interaction: discord.Interaction, server: str, command: str):
 
     result = rcon_command(server, command)
     await interaction.response.send_message(f"[{server}] {result}")
+
+# --- Status Commands ---
+
+@tree.command(name="status", description="Get server status information")
+@app_commands.describe(server="Server key from servers.json (optional if only one server)")
+async def status(interaction: discord.Interaction, server: str = None):
+    print(f"status called with: {server}")
+    guild_id = interaction.guild_id
+    guild_servers = get_guild_servers(guild_id)
+
+    if not guild_servers:
+        await interaction.response.send_message("No servers are configured for this Discord server.", ephemeral=True)
+        return
+
+    if server is None:
+        server = get_single_guild_server(guild_id)
+        if server is None:
+            await interaction.response.send_message("Multiple servers are available. Please specify the server.", ephemeral=True)
+            return
+
+    if server not in guild_servers:
+        await interaction.response.send_message(f"❌ Server '{server}' is not available in this Discord server.", ephemeral=True)
+        return
+
+    # Get version information
+    version_info = rcon_command(server, "version")
+    
+    # Get player count
+    player_count = rcon_command(server, "list")
+    
+    # Create embed
+    embed = discord.Embed(
+        title=f"{server} - Server Status",
+        color=discord.Color.blue()
+    )
+    
+    embed.add_field(name="Version", value=version_info, inline=False)
+    embed.add_field(name="Players", value=player_count, inline=False)
+    
+    await interaction.response.send_message(embed=embed)
+
+@tree.command(name="tps", description="Check server's Ticks Per Second")
+@app_commands.describe(server="Server key from servers.json (optional if only one server)")
+async def tps(interaction: discord.Interaction, server: str = None):
+    print(f"tps called with: {server}")
+    guild_id = interaction.guild_id
+    guild_servers = get_guild_servers(guild_id)
+
+    if not guild_servers:
+        await interaction.response.send_message("No servers are configured for this Discord server.", ephemeral=True)
+        return
+
+    if server is None:
+        server = get_single_guild_server(guild_id)
+        if server is None:
+            await interaction.response.send_message("Multiple servers are available. Please specify the server.", ephemeral=True)
+            return
+
+    if server not in guild_servers:
+        await interaction.response.send_message(f"❌ Server '{server}' is not available in this Discord server.", ephemeral=True)
+        return
+
+    # Get TPS information (different commands depending on server type)
+    # Try Spigot/Paper command first
+    result = rcon_command(server, "tps")
+    
+    # If that didn't work, try vanilla command
+    if "Unknown command" in result:
+        result = rcon_command(server, "debug start")
+        # Wait briefly
+        await interaction.response.defer()
+        import asyncio
+        await asyncio.sleep(5)
+        result = rcon_command(server, "debug stop")
+    
+    embed = discord.Embed(
+        title=f"{server} - TPS Information",
+        description=result,
+        color=discord.Color.green()
+    )
+    
+    await interaction.response.send_message(embed=embed)
+
+@tree.command(name="memory", description="Check server memory usage")
+@app_commands.describe(server="Server key from servers.json (optional if only one server)")
+async def memory(interaction: discord.Interaction, server: str = None):
+    print(f"memory called with: {server}")
+    guild_id = interaction.guild_id
+    guild_servers = get_guild_servers(guild_id)
+
+    if not guild_servers:
+        await interaction.response.send_message("No servers are configured for this Discord server.", ephemeral=True)
+        return
+
+    if server is None:
+        server = get_single_guild_server(guild_id)
+        if server is None:
+            await interaction.response.send_message("Multiple servers are available. Please specify the server.", ephemeral=True)
+            return
+
+    if server not in guild_servers:
+        await interaction.response.send_message(f"❌ Server '{server}' is not available in this Discord server.", ephemeral=True)
+        return
+
+    # Different servers might have different commands for this
+    # Try Paper GC command
+    result = rcon_command(server, "gc")
+    
+    if "Unknown command" in result:
+        # If not Paper/Spigot, fallback to less detailed message
+        result = "Memory information only available on Paper/Spigot servers with GC command enabled."
+    
+    embed = discord.Embed(
+        title=f"{server} - Memory Usage",
+        description=result,
+        color=discord.Color.gold()
+    )
+    
+    await interaction.response.send_message(embed=embed)
+
+@tree.command(name="world", description="Get information about the Minecraft world")
+@app_commands.describe(server="Server key from servers.json (optional if only one server)")
+async def world(interaction: discord.Interaction, server: str = None):
+    print(f"world called with: {server}")
+    guild_id = interaction.guild_id
+    guild_servers = get_guild_servers(guild_id)
+
+    if not guild_servers:
+        await interaction.response.send_message("No servers are configured for this Discord server.", ephemeral=True)
+        return
+
+    if server is None:
+        server = get_single_guild_server(guild_id)
+        if server is None:
+            await interaction.response.send_message("Multiple servers are available. Please specify the server.", ephemeral=True)
+            return
+
+    if server not in guild_servers:
+        await interaction.response.send_message(f"❌ Server '{server}' is not available in this Discord server.", ephemeral=True)
+        return
+
+    # Get time information
+    time_info = rcon_command(server, "time query daytime")
+    
+    # Get weather information
+    weather_info = rcon_command(server, "weather query")
+    
+    # Get difficulty
+    difficulty_info = rcon_command(server, "difficulty")
+    
+    embed = discord.Embed(
+        title=f"{server} - World Information",
+        color=discord.Color.purple()
+    )
+    
+    embed.add_field(name="Time", value=time_info, inline=False)
+    embed.add_field(name="Weather", value=weather_info, inline=False)
+    embed.add_field(name="Difficulty", value=difficulty_info, inline=False)
+    
+    await interaction.response.send_message(embed=embed)
+
