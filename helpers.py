@@ -52,6 +52,55 @@ class ServerConfigManager:
 # Create a singleton instance
 server_manager = ServerConfigManager()
 
+class UserManagementSystem:
+    """Singleton class to manage user additions/removals"""
+    _instance = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(UserManagementSystem, cls).__new__(cls)
+            cls._instance._load_data()
+        return cls._instance
+    
+    def _load_data(self):
+        self.DATA_FILE = "user_management.json"
+        
+        if not os.path.exists(self.DATA_FILE) or os.path.getsize(self.DATA_FILE) == 0:
+            self.data = {"entries": {}}
+            self._save_data()
+        else:
+            with open(self.DATA_FILE) as f:
+                self.data = json.load(f)
+    
+    def _save_data(self):
+        with open(self.DATA_FILE, "w") as f:
+            json.dump(self.data, f, indent=4)
+    
+    def record_addition(self, server_key, minecraft_username, discord_user_id):
+        """Record who added which username to which server"""
+        entry_key = f"{server_key}:{minecraft_username.lower()}"
+        self.data["entries"][entry_key] = discord_user_id
+        self._save_data()
+    
+    def can_remove(self, server_key, minecraft_username, discord_user_id, is_admin=False):
+        """Check if user can remove a username"""
+        entry_key = f"{server_key}:{minecraft_username.lower()}"
+        if is_admin:
+            return True
+        if entry_key in self.data["entries"]:
+            return str(self.data["entries"][entry_key]) == str(discord_user_id)
+        return False
+    
+    def remove_entry(self, server_key, minecraft_username):
+        """Remove the entry after successful removal"""
+        entry_key = f"{server_key}:{minecraft_username.lower()}"
+        if entry_key in self.data["entries"]:
+            del self.data["entries"][entry_key]
+            self._save_data()
+
+# Create a singleton instance for user management
+user_manager = UserManagementSystem()
+
 def get_guild_servers(guild_id):
     """Get servers configured for a specific guild"""
     print(f"get_guild_servers called with: {guild_id}")
@@ -92,3 +141,21 @@ def is_admin(user: discord.User | discord.Member):
 def add_server(server_key, host, port, password, guild_id):
     """Add a server to the configuration"""
     return server_manager.add_server(server_key, host, port, password, guild_id)
+
+def add_player(server_key, minecraft_username, discord_user_id):
+    """Add a player to the whitelist and record who added them"""
+    # Use explicit "whitelist add" command
+    result = rcon_command(server_key, "whitelist add " + minecraft_username)
+    user_manager.record_addition(server_key, minecraft_username, discord_user_id)
+    return result
+
+def remove_player(server_key, minecraft_username, discord_user_id, is_admin=False):
+    """Remove a player from the whitelist if allowed"""
+    if user_manager.can_remove(server_key, minecraft_username, discord_user_id, is_admin):
+        # Use explicit "whitelist remove" command
+        result = rcon_command(server_key, "whitelist remove " + minecraft_username)
+        if "Removed" in result or "was not on" in result:
+            user_manager.remove_entry(server_key, minecraft_username)
+        return result, True
+    else:
+        return "You can only remove players that you added yourself.", False

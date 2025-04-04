@@ -1,7 +1,8 @@
 import discord
 from discord import app_commands
 from bot_setup import bot, tree
-from helpers import get_guild_servers, get_single_guild_server, rcon_command, is_admin, add_server
+from helpers import (get_guild_servers, get_single_guild_server, rcon_command, 
+                    is_admin, add_server, add_player, remove_player)
 
 # --- Helper functions for server management ---
 
@@ -96,10 +97,16 @@ async def weather(interaction: discord.Interaction, type: str, server: str = Non
     await interaction.response.send_message(f"[{server}] {result}")
 
 
-@tree.command(name="whitelist", description="Add yourself to the server whitelist")
-@app_commands.describe(server="Server key (optional if only one server)")
-async def whitelist(interaction: discord.Interaction, server: str = None):
-    print(f"whitelist called with: {server}")
+# Whitelist command group
+whitelist_group = app_commands.Group(name="whitelist", description="Manage the server whitelist")
+
+@whitelist_group.command(name="add", description="Add a player to the server whitelist")
+@app_commands.describe(
+    minecraft_username="Minecraft username to whitelist",
+    server="Server key (optional if only one server)"
+)
+async def whitelist_add(interaction: discord.Interaction, minecraft_username: str, server: str = None):
+    print(f"whitelist add called with: {minecraft_username}, {server}")
     guild_id = interaction.guild_id
     guild_servers = get_guild_servers(guild_id)
 
@@ -117,9 +124,45 @@ async def whitelist(interaction: discord.Interaction, server: str = None):
         await interaction.response.send_message(f"❌ Server '{server}' is not available in this Discord server.", ephemeral=True)
         return
 
-    username = interaction.user.name
-    result = rcon_command(server, f"whitelist add {username}")
+    discord_user_id = interaction.user.id
+    result = add_player(server, minecraft_username, discord_user_id)
     await interaction.response.send_message(f"[{server}] {result}")
+
+@whitelist_group.command(name="remove", description="Remove a player from the server whitelist")
+@app_commands.describe(
+    minecraft_username="Minecraft username to remove",
+    server="Server key (optional if only one server)"
+)
+async def whitelist_remove(interaction: discord.Interaction, minecraft_username: str, server: str = None):
+    print(f"whitelist remove called with: {minecraft_username}, {server}")
+    guild_id = interaction.guild_id
+    guild_servers = get_guild_servers(guild_id)
+
+    if not guild_servers:
+        await interaction.response.send_message("No servers are configured for this Discord server.", ephemeral=True)
+        return
+
+    if server is None:
+        server = get_single_guild_server(guild_id)
+        if server is None:
+            await interaction.response.send_message("Multiple servers are available. Please specify the server.", ephemeral=True)
+            return
+
+    if server not in guild_servers:
+        await interaction.response.send_message(f"❌ Server '{server}' is not available in this Discord server.", ephemeral=True)
+        return
+
+    discord_user_id = interaction.user.id
+    user_is_admin = is_admin(interaction.user)
+    result, success = remove_player(server, minecraft_username, discord_user_id, user_is_admin)
+    
+    if success:
+        await interaction.response.send_message(f"[{server}] {result}")
+    else:
+        await interaction.response.send_message(f"❌ {result}", ephemeral=True)
+
+# Add the whitelist command group to the bot
+tree.add_command(whitelist_group)
 
 
 # --- Admin-only Commands ---

@@ -175,3 +175,5 @@ cython_debug/
 
 #serverfiles
 servers.json
+user_management.json
+
